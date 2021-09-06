@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <title>tenki-gl</title>
+  <meta name="viewport" content="initial-scale=1.0, maximum-scale=1.0" />
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@1.14.0/dist/maplibre-gl.css" />
+  <script src="https://unpkg.com/maplibre-gl@1.14.0/dist/maplibre-gl.js"></script>
+</head>
+
+<body>
+  <div id="map" style="position:absolute;top:0;left:0;bottom:0;right:0;"></div>
+  <script>
+    function parseBasetime(basetime) {
+      if (!basetime.match(/^(\d\d\d\d)(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)$/)) return null;
+      const date = new Date(`${RegExp.$1}-${RegExp.$2}-${RegExp.$3}T${RegExp.$4}:${RegExp.$5}:${RegExp.$6}`);
+      date.setHours(date.getHours() + 9);
+      return date;
+    }
+
+    class MyControl {
+      onAdd(map) {
+        this._map = map;
+        this._container = document.createElement('div');
+        this._container.className = 'mapboxgl-ctrl';
+        this._container.setAttribute("style", "color:white;text-shadow:2px 2px 2px black;text-align:center;");
+
+        this._clock = document.createElement('div');
+        this._clock.setAttribute("style", "font-size:96pt;line-height:96pt;");
+        this._clock.textContent = "00:00:00";
+        this._container.appendChild(this._clock);
+
+        this._minutes = document.createElement('select');
+        this._minutes.setAttribute("style", "font-size:24pt;line-height:24pt;background:transparent;border:none;color:white;text-shadow:1px 1px 1px black;");
+
+        this._minutes.addEventListener("change", () => this.onChange());
+
+        this._container.appendChild(this._minutes);
+        this._tickTimer = setInterval(() => this.tick(), 1000);
+        this._updateTimer = setInterval(() => this.update(), 10 * 1000);
+
+        this.update();
+
+        return this._container;
+      }
+      async update() {
+
+        const now = new Date();
+        let sec = NaN;
+        Array.from(this._minutes.children).forEach(option => {
+          const delta = now.getTime() - parseInt(option.getAttribute("data-time"));
+          sec = isNaN(sec) ? delta : Math.min(sec, delta);
+        });
+
+        if (isNaN(sec) || sec > 300000) {
+          const res = await fetch("https://www.jma.go.jp/bosai/jmatile/data/nowc/targetTimes_N1.json");
+          const json = await res.json();
+          const select = this._minutes;
+          while (select.firstChild) select.removeChild(select.firstChild);
+          json.map(a => a.basetime).sort().reverse().forEach(basetime => {
+            const date = parseBasetime(basetime);
+            if (!date) return;
+            const option = document.createElement("option");
+            option.setAttribute("style", "font-size:12pt;color:black;");
+            option.value = `https://www.jma.go.jp/bosai/jmatile/data/nowc/${basetime}/none/${basetime}/surf/hrpns/{z}/{x}/{y}.png`;
+            option.setAttribute("data-time", date.getTime());
+            select.appendChild(option);
+          });
+        }
+
+        Array.from(this._minutes.children).forEach(option => {
+          const delta = now.getTime() - parseInt(option.getAttribute("data-time"));
+          const min = Math.floor(delta / 60000);
+          const txt = `${min}分前の天気`;
+          if (option.textContent !== txt) option.textContent = txt;
+        });
+
+        this.onChange();
+      }
+      onChange() {
+        const key = "jma_hrpns";
+        const url = this._minutes.value;
+        const map = this._map;
+
+        const source = map.getSource(key);
+
+        if (source === undefined) {
+          map.addSource(key, {
+            "type": "raster",
+            "tiles": [
+              url
+            ],
+            "tileSize": 256,
+            "maxzoom": 10,
+            "minzoom": 4,
+            "attribution": "<a href='https://www.jma.go.jp/jma/kishou/know/kurashi/highres_nowcast.html'>気象庁(高解像度降水ナウキャスト)</a>"
+          });
+          map.addLayer({
+            "id": "jma_hrpns",
+            "type": "raster",
+            "source": key,
+            "minzoom": 4,
+            "maxzoom": 18,
+            "paint": {
+              "raster-opacity": 1.0,
+              "raster-resampling": "nearest",
+              "raster-fade-duration": 0
+            }
+          }, "boundary_outline");
+
+        } else if (source.tiles[0] !== url) {
+          source.tiles[0] = url;
+          const cache = map.style.sourceCaches[key];
+          cache.clearTiles()
+          cache.update(map.transform)
+          map.triggerRepaint();
+        }
+      }
+      tick() {
+        const now = new Date();
+        this._clock.textContent = new Intl.DateTimeFormat('ja-JP', {
+          hour: 'numeric',
+          minute: 'numeric',
+          second: 'numeric'
+        }).format(now);
+      }
+      onRemove() {
+        this._container.parentNode.removeChild(this._container);
+        this._map = undefined;
+        clearInterval(this._tickTimer);
+        clearInterval(this._updateTimer);
+        this._tickTimer = undefined;
+        this._updateTimer = undefined;
+      }
+      getDefaultPosition() {
+        return 'top-left';
+      }
+    }
+
+
+    const style = {
+      "version": 8,
+      "glyphs": "https://maps.gsi.go.jp/xyz/noto-jp/{fontstack}/{range}.pbf",
+      "sources": {
+        "gsi_experimental_bvmap4-7": {
+          "type": "vector",
+          "tiles": [
+            "https://cyberjapandata.gsi.go.jp/xyz/experimental_bvmap/{z}/{x}/{y}.pbf"
+          ],
+          "minzoom": 4,
+          "maxzoom": 7,
+          "attribution": "<a href='https://github.com/gsi-cyberjapan/gsimaps-vector-experiment'>地理院地図Vector</a>"
+        },
+        "gsi_experimental_bvmap4-16": {
+          "type": "vector",
+          "tiles": [
+            "https://cyberjapandata.gsi.go.jp/xyz/experimental_bvmap/{z}/{x}/{y}.pbf"
+          ],
+          "minzoom": 4,
+          "maxzoom": 16,
+          "attribution": "<a href='https://github.com/gsi-cyberjapan/gsimaps-vector-experiment'>地理院地図Vector</a>"
+        },
+        "ortho": {
+          "type": "raster",
+          "tiles": [
+            "https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}?blankTile=false"
+          ],
+          "tileSize": 256,
+          "minzoom": 2,
+          "maxzoom": 8,
+          "attribution": "<a href='https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer'>USGS Imagery Only</a>"
+        }
+      },
+      "layers": [{
+          "id": "background",
+          "type": "background",
+          "paint": {
+            "background-color": "#000000"
+          }
+        },
+        {
+          "id": "ortho",
+          "type": "raster",
+          "source": "ortho",
+          "minzoom": 2,
+          "maxzoom": 18,
+          "paint": {
+            "raster-resampling": "nearest"
+          }
+        }, {
+          "id": "boundary_outline",
+          "type": "line",
+          "source": "gsi_experimental_bvmap4-16",
+          "source-layer": "boundary",
+          "minzoom": 4,
+          "maxzoom": 18,
+          "filter": ["in", ["get", "ftCode"],
+            ["literal", [51212, 1211, 1212]]
+          ],
+          "paint": {
+            "line-color": "#ffffff",
+            "line-width": 5
+          },
+          "layout": {
+            "line-cap": "round",
+            "line-join": "round"
+          }
+        },
+        {
+          "id": "coastline_outline",
+          "type": "line",
+          "source": "gsi_experimental_bvmap4-7",
+          "source-layer": "coastline",
+          "minzoom": 4,
+          "maxzoom": 18,
+          "filter": ["==", ["geometry-type"], "LineString"],
+          "paint": {
+            "line-color": "#ffffff",
+            "line-width": 5
+          },
+          "layout": {
+            "line-cap": "round",
+            "line-join": "round"
+          }
+        },
+        {
+          "id": "boundary",
+          "type": "line",
+          "source": "gsi_experimental_bvmap4-16",
+          "source-layer": "boundary",
+          "minzoom": 4,
+          "maxzoom": 18,
+          "filter": ["in", ["get", "ftCode"],
+            ["literal", [51212, 1211, 1212]]
+          ],
+          "paint": {
+            "line-color": "#000000",
+            "line-width": 2
+          },
+          "layout": {
+            "line-cap": "round",
+            "line-join": "round"
+          }
+        },
+        {
+          "id": "coastline",
+          "type": "line",
+          "source": "gsi_experimental_bvmap4-7",
+          "source-layer": "coastline",
+          "minzoom": 5,
+          "maxzoom": 18,
+          "filter": ["==", ["geometry-type"], "LineString"],
+          "paint": {
+            "line-color": "#000000",
+            "line-width": 2
+          },
+          "layout": {
+            "line-cap": "round",
+            "line-join": "round"
+          }
+        }, {
+          "id": "railway",
+          "type": "line",
+          "source": "gsi_experimental_bvmap4-16",
+          "source-layer": "railway",
+          "minzoom": 10,
+          "maxzoom": 18,
+          "filter": ["==", ["geometry-type"], "LineString"],
+          "paint": {
+            "line-color": "#c0c0c0",
+            "line-width": 2
+          },
+          "layout": {
+            "line-cap": "round",
+            "line-join": "round"
+          }
+        }, {
+          "id": "label",
+          "type": "symbol",
+          "source": "gsi_experimental_bvmap4-7",
+          "source-layer": "label",
+          "minzoom": 5,
+          "maxzoom": 18,
+          "filter": ["==", "annoCtg", 140],
+          "layout": {
+            "text-size": 24,
+            "text-field": ["get", "knj"],
+            "text-font": [
+              "NotoSansCJKjp-Regular"
+            ]
+          },
+          "paint": {
+            "text-color": "#ffffff",
+            "text-halo-color": "#000000",
+            "text-halo-width": 4,
+            "text-halo-blur": 2
+          }
+        }, {
+          "id": "label2",
+          "type": "symbol",
+          "source": "gsi_experimental_bvmap4-16",
+          "source-layer": "label",
+          "minzoom": 11,
+          "maxzoom": 18,
+          "filter": ["==", "annoCtg", 110],
+          "layout": {
+            "text-size": 22,
+            "text-field": ["get", "knj"],
+            "text-font": [
+              "NotoSansCJKjp-Regular"
+            ],
+            "symbol-placement": "point",
+            "icon-allow-overlap": true,
+            "text-keep-upright": true,
+            "text-allow-overlap": true,
+            "symbol-z-order": "auto",
+            "text-max-width": 100
+          },
+          "paint": {
+            "text-color": "rgba(255,255,255,1)",
+            "text-halo-color": "rgba(0,0,0,1)",
+            "text-halo-width": 3,
+            "text-halo-blur": 1
+          }
+        }
+      ]
+    };
+
+    const map = new maplibregl.Map({
+      container: "map",
+      center: [139.8508, 35.416],
+      zoom: 9,
+      pitch: 60,
+      bearing: -30,
+      hash: true,
+      style: style
+    });
+    map.addControl(new maplibregl.FullscreenControl());
+    map.addControl(new MyControl());
+  </script>
+</body>
+
+</html>
